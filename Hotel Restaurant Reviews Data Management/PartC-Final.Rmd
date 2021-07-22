@@ -1,0 +1,184 @@
+---
+title: "Data Management"
+author: "Dushant Gohri"
+date: "2020/11/30"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+```
+
+Installing necessary packages for Data Management to work,
+
+```{r PART C1, Eval=FALSE, warning=FALSE}
+ install.packages("tidyverse")
+ install.packages("janitor")
+ install.packages("rvest")
+ install.packages("httr")
+install.packages('devtools') 
+library(devtools) 
+install_github("ramnathv/rCharts")
+library("tidyverse")
+library("readxl")
+library("dplyr")
+library("janitor")
+library("tidyr")
+library(shiny)
+library(rCharts)
+library(leaflet)
+library(plyr)
+library(rvest)
+library(xml2)
+library(httr)
+library(stringr)
+library(rebus)
+library(XML)
+library(readr)
+library(RSQLite)
+install.packages("writexl")
+library(writexl)
+
+
+```
+
+
+Created a for loop again for reading the excel file individually as all the excel files are similar we can also apply necessary operations like removing a column/row in the same loop, so that we can have a structured data frame of all the data
+
+now adding the country and flow column in the dataframe and removing duplicate row instances from the data frame.
+
+
+finally, we have the data frame of our need, we need to apply the pivot longer function on the data frame and count the actual rows produced with all the excel data
+
+
+using pivot_wider function to find out the number of records for each product across countries across years
+
+
+
+```{r PART C1, Eval=FALSE, warning=FALSE}
+
+# With the given link in the assignment, scrapping all the links for XML data
+url <- "https://www.food.gov.uk/uk-food-hygiene-rating-data-api"
+# store all xml link
+url %>% 
+  read_html() %>%
+  html_nodes(xpath = "//*/article/div/div/p[5]/a") %>%
+  html_attr("href") %>%
+  read_html() %>%
+  html_nodes(xpath = "//*/article/dl[2]/dd/strong/a") %>%
+  html_attr("href") -> all.xml.links
+
+head(all.xml.links)
+
+```
+
+# Download all XML files through link for every row (city)
+
+```{r}
+#Checking if the directory exists
+output_dir <- file.path("./xml_files")
+
+if (!dir.exists(output_dir)){
+dir.create(output_dir)
+} else {
+    print("Dir already exists!")
+}
+
+#Initialise empty data frame for storing all the xml file path in current directory
+allxmlfilespath = data.frame()
+for (i in 2:length(all.xml.links)) {
+  url <- all.xml.links[i]
+  #splitting the link to get the filename
+  filename_vector <- strsplit(all.xml.links[i],split="/")[[1]]
+  filename <- filename_vector[length(filename_vector)]
+  filePath <- paste0("xml_files/",filename)
+  wholefilePath <- paste0("./", filePath)
+  #checking if the file already exists in the directory then don't download the file again
+  if(!file.exists(wholefilePath)) {
+    print(wholefilePath)
+    #downloading XML file to local directory
+    download.file(url,filePath)
+  }
+  allxmlfilespath <- rbind(allxmlfilespath,wholefilePath)
+  #renaming the colName of dataframe to more meaningful name
+  names(allxmlfilespath)[1] <- "wholeFilePath"
+}
+```
+
+```{r, Eval=FALSE, warning=FALSE}
+
+#initialise an empty Data Frames 
+
+dfHygiene<- data.frame()
+dfStructural<- data.frame()
+dfConfidenceInManagement<- data.frame()
+total<- data.frame()
+result <- data.frame()
+
+modify_xml <- function(doc, node_name) {
+  nodes = getNodeSet(doc, str_interp("//EstablishmentDetail/Scores[not(${node_name})]"))
+  sapply(nodes, function(node) node[[str_interp("${node_name}")]] = "")
+}
+
+for(i in 1:length(allxmlfilespath$wholeFilePath) ){
+# LOADING TRANSFORMED XML INTO R DATA FRAME
+  print(i)
+  # (xpathSApply(doc, "//ItemCount", xmlValue)) -> count
+  # total <- rbind(total,count)
+ 
+doc<-xmlParse(allxmlfilespath$wholeFilePath[i])
+  modify_xml(doc, "Hygiene")
+  modify_xml(doc, "Structural")
+  modify_xml(doc, "ConfidenceInManagement")
+
+#extracting data from xml using XmltoDataFrame 
+
+xmldf <- xmlToDataFrame(nodes = getNodeSet(doc, "//EstablishmentDetail")) %>%
+  select(., -Geocode) %>% select(., -Scores) 
+
+dfGeocode <- xmlToDataFrame(nodes = getNodeSet(doc, "//Geocode") ) %>% 
+  bind_cols(xmldf, .) %>% 
+  bind_rows(result,.) -> result
+
+colHygiene <- xmlToDataFrame(nodes = getNodeSet(doc, "//Hygiene") ) %>% 
+  bind_rows(dfHygiene, .) -> dfHygiene
+
+colStructural <- xmlToDataFrame(nodes = getNodeSet(doc, "//Structural") ) %>%
+  bind_rows(dfStructural, .) -> dfStructural
+
+colConfidenceInManagement <- xmlToDataFrame(nodes = getNodeSet(doc, "//ConfidenceInManagement") ) %>%
+  bind_rows(dfConfidenceInManagement, .) -> dfConfidenceInManagement
+
+
+}
+
+#changing the column names to more meaningful name
+colnames(dfHygiene)[1] <- "Hygiene"
+colnames(dfStructural)[1] <- "Structural"
+colnames(dfConfidenceInManagement)[1] <- "ConfidenceInManagement"
+#colnames(total)[1] <- "Observations"
+
+# binding all the dataframe to result dataframe, so that we can have more cleaner look 
+result<- bind_cols(list(result, dfHygiene, dfStructural, dfConfidenceInManagement)) %>%
+  na_if(.,"")
+
+#converting Longitude and latitude to Numeric data type 
+result$Latitude <- as.numeric(as.character(result$Latitude))
+result$Longitude <- as.numeric(as.character(result$Longitude))
+
+#saving the Xml data in Rdata file for Part D continuation, so that we dont have to render the data again from web 
+save(result,file="data_result_C.RData")
+
+
+#To check ItemCount in all XML ratings link matches number of rows
+#numberOfObservation <- sum(as.numeric(total$Observations))
+
+write_xlsx(result, "./data_result_C.xlsx")
+
+
+head(result)
+nrow(result)
+```

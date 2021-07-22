@@ -1,0 +1,99 @@
+---
+title: "Data Management"
+author: "Dushant Gohri"
+date: "2020/11/30"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+```
+
+Installing necessary packages for Data Management to work,
+
+```{r Packages for}
+ install.packages("tidyverse")
+ install.packages("janitor")
+ install.packages("rvest")
+ install.packages("httr")
+install.packages('devtools') 
+library(devtools) 
+install_github("ramnathv/rCharts")
+library("tidyverse")
+library("readxl")
+library("dplyr")
+library("janitor")
+library("tidyr")
+library(shiny)
+library(rCharts)
+library(leaflet)
+library(plyr)
+library(rvest)
+library(xml2)
+library(httr)
+library(stringr)
+library(rebus)
+library(XML)
+library(readr)
+library(RSQLite)
+
+```
+```{r PART B2, message=FALSE, Eval=FALSE}
+dirs<- list.dirs( "./group_assignment")
+AllFilesPath = data.frame()
+for(i in 1:length(dirs)){
+  file_names <- list.files(dirs[i], pattern = "\\.xlsx$")
+    if(length(file_names)!=0){
+      paste(dirs[i],file_names, sep="/") %>% 
+        data.frame() %>% 
+        rbind(AllFilesPath,.) -> AllFilesPath
+    }
+}
+
+allFiles = data.frame()
+for ( ExcelFilePath in AllFilesPath$.){
+   excel <- read_excel(ExcelFilePath, col_names = FALSE) %>%
+.[,-2] %>%
+ mutate(., Country=paste(.[5,2]),Flow=paste(.[3,2])) %>%
+ .[-c(1,2,3,4,5,7),] %>%
+ na.omit() %>%
+  na_if(., "..") %>%
+ rbind(allFiles,.) -> allFiles
+}
+
+```
+
+```{r PART B2}
+allFiles <- row_to_names(allFiles,1) 
+names(allFiles)[1] <- "year"
+names(allFiles)[67] <- "country"
+names(allFiles)[68] <- "flow"
+allFiles<- allFiles[allFiles$BKB != "BKB",] %>%  pivot_longer(-c(country,year,flow),names_to ="product") %>% 
+  select(country, everything()) 
+
+head(allFiles)
+nrow(allFiles)
+
+#573950
+
+```
+
+
+```{r PART B2}
+data_result_new<-allFiles
+
+data_product<-data_result_new %>%
+  filter(!is.na(.)) %>%
+  group_by(country, year, product) %>% 
+  mutate(total_value=sum(as.numeric(as.character(value)))) %>% 
+  select(country, year, product, total_value) %>% 
+  distinct()
+
+head(data_product)
+nrow(data_product)
+
+#101335
+```

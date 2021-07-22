@@ -1,0 +1,246 @@
+---
+title: "Finalising"
+author: "Rohan Kunte"
+date: "12/8/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+#library(tidyverse) 
+library(caTools) #This package is for data partitioning
+library(ROSE) #This package is for oversampling and undersampling
+library(DMwR) #This package is for smote method of data balancing
+library(xgboost) #This package is for building XGBoost model
+library(caret) #This package is for computing confusion matrix
+library(boot) #This package is for building GLM model
+library(randomForest) #This package is for building RandomForest model
+library(pROC) #This package is for plotting ROC chart
+library(CustomerScoringMetrics) #This package is for plotting Gain chart
+#library(FSelector)
+
+```
+
+```{r}
+# rm(list = ls())
+# seting seed for all the random process below
+set.seed(27)
+```
+
+```{r}
+# Importing data and doing some data preparation
+dataset <- read.csv("datafile_full.csv")
+head(dataset)
+dataset$ID_code <- NULL
+dataset <- na.omit(dataset)
+summary(dataset)
+```
+
+```{r}
+# Removing Outliers
+
+# Creating a function to identify Outliers using the '1.5 IQR rule'
+outliers <- function(x) {
+  
+  Q1 <- quantile(x, probs=.25) # 1st Quartile
+  Q3 <- quantile(x, probs=.75) # 3rd Quartile
+  iqr <-  Q3-Q1 # Inter Quartile Range
+  
+  upper_limit = Q3 + (iqr*1.5) # Upper limit
+  lower_limit = Q1 - (iqr*1.5) # Lower limit
+  
+  x > upper_limit | x < lower_limit # Data points which outside the limits
+}
+
+# Creating a function to remove tge outliers
+remove_outliers <- function(df, cols = names(df)) {
+  for (col in cols) {
+    df <- df[!outliers(df[[col]]),]
+  }
+  df
+}
+
+# Getting column Names of the dataset
+cnames <- colnames(dataset)
+# Getting the normalised dataset
+dataset_norm <- remove_outliers(dataset, cnames[-1])
+```
+
+```{r}
+#Distribution of target variable before and after removing outliers
+table(dataset$target)
+prop.table(table(dataset$target))
+table(dataset_norm$target)
+prop.table(table(dataset_norm$target))
+
+#Percentage of Outliers whose target variable is "1"
+(table(dataset$target)[2] - table(dataset_norm$target)[2])/ table(dataset$target)[2] 
+```
+
+```{r}
+# Data Partitioning into Training and Test datasets
+partition <- sample.split(dataset_norm$target, SplitRatio = 0.80)
+training_set <- subset(dataset_norm, partition == TRUE)
+test_set <- subset(dataset_norm, partition == FALSE)
+```
+
+```{r}
+#Data balancing using Oversampling and Undersampling
+
+# training_set_over <- ovun.sample(target~., data=training_set, method="over", p=0.5)$data
+# training_set_both <- ovun.sample(target~., data=training_set, method="both", p=0.5)$data
+```
+
+```{r}
+#Data balancing using smote
+training_set_smote <- training_set
+training_set_smote$target <- as.factor(training_set_smote$target) 
+training_set_smote <- SMOTE(target ~ ., as.data.frame(training_set_smote), perc.over = 500, k = 5, perc.under=100)
+
+table(training_set$target)
+table(training_set_smote$target)
+prop.table(table(training_set$target))
+prop.table(table(training_set_smote$target))
+```
+
+```{r}
+# Building XGBoost model
+# We create a new  training dataset because XGBoost does not accept factors and charater features
+
+training_set_1 <- training_set_smote
+training_set_1$target <- as.integer(training_set_1$target) -1
+
+# Setting Parameters for the XGBoost Model
+parameters <- list(eta = 0.1,
+                   max_depth = 5,
+                   subsample = 0.8,
+                   colsample_bytree = 0.8,
+                   min_child_weight = 1,
+                   gamma = 0,
+                   scale_pos_weight = 2,
+                   eval_metric = "auc",
+                   objective = "binary:logistic",
+                   booster = "gbtree")
+
+# Build the Model
+model_XGB <- xgboost(data = as.matrix(training_set_1[-1]),
+                   label = training_set_1$target,
+                   nthread = 6,
+                   nrounds = 800,
+                   params = parameters,
+                   print_every_n = 100,
+                   early_stopping_rounds = 10)
+
+
+```
+
+```{r}
+# Saving  prediction  probabilities of XGBoost Model
+prob_XGB <- predict(model_XGB, newdata = as.matrix(test_set[-1]))
+prob_XGB_training <- predict (model_XGB,newdata = as.matrix(training_set_smote[-1]))
+
+# Setting the threshold of probabilities as 0.2 in the prediction of test_set due to the Imbalance in the test_set$target
+prediction_XGB <- ifelse(prob_XGB > 0.2, 1, 0)
+prediction_XGB_training <- ifelse(prob_XGB_training > 0.2, 1, 0)
+
+#Creating confusionmatrix in test_set and training_set_smote to check the performance and overfitting
+confusionMatrix(table(prediction_XGB, test_set$target), positive = "1",mode = "prec_recall")
+confusionMatrix(table(prediction_XGB_training, training_set_smote$target), positive = "1",mode = "prec_recall")
+```
+
+```{r}
+#Building GLM model
+for (i in 1:10) {
+  model_GLM <- glm(target ~., training_set_smote, family = "binomial")
+  model_GLM[i] = cv.glm(training_set_smote, model_GLM, K = 10)$delta[1]
+}
+```
+
+```{r}
+# Saving  prediction  probabilities of GLM Model
+prob_GLM <- predict(model_GLM, test_set, type = "response", probability = TRUE)
+prob_GLM_training <- predict(model_GLM, training_set_smote, type = "response", probability = TRUE)
+
+# Setting the threshold of probabilities as 0.2 in the prediction of test_set due to the Imbalance in the test_set$target
+prediction_GLM <- ifelse(prob_GLM > 0.4, "1", "0")
+prediction_GLM <- as.factor(prediction_GLM)
+
+prediction_GLM_training <- ifelse(prob_GLM_training > 0.4, "1", "0")
+prediction_GLM_training <- as.factor(prediction_GLM_training)
+
+#Creating confusionmatrix in test_set and training_set_smote to check the performance and overfitting
+confusionMatrix(table(prediction_GLM, test_set$target), positive = "1", mode = "prec_recall")
+confusionMatrix(table(prediction_GLM_training, training_set_smote$target), positive = "1", mode = "prec_recall")
+```
+
+
+```{r}
+#Building RandomForest model
+model_RF <- randomForest(target ~., training_set_smote,ntree = 400, mtry = 3)
+```
+
+```{r}
+#Saving  prediction  of SVM Model 
+prediction_RF <- predict(model_RF, test_set)
+prediction_RF_training <- predict(model_RF,training_set_smote)
+
+##Creating confusionmatrix in test_set and training_set_smote to check the performance and overfitting
+confusionMatrix(table(prediction_RF, test_set$target), positive='1',,mode = "prec_recall")
+confusionMatrix(table(prediction_RF_training, training_set_smote$target), positive='1',,mode = "prec_recall")
+```
+
+```{r}
+# Obtain predicted probabilities for RandomForest
+RFpred <- predict(model_RF, test_set, type = "prob")
+prob_RF <- RFpred[,2]
+
+# Use roc function to return some performance metrics
+ROC_XGB <- roc(test_set$target, prob_XGB)
+ROC_GLM <- roc(test_set$target, prob_GLM)
+ROC_RF <- roc(test_set$target, prob_RF)
+
+# Extract required data from ROC_RF
+df_XGB = data.frame((1-ROC_XGB$specificities), ROC_XGB$sensitivities)
+df_GLM = data.frame((1-ROC_GLM$specificities), ROC_GLM$sensitivities)
+df_RF = data.frame((1-ROC_RF$specificities), ROC_RF$sensitivities)
+```
+
+```{r}
+# Plotting the ROC curve for three models and adding a diagonal line
+
+plot(df_XGB, col="red", type="l",        
+xlab="False Positive Rate (1-Specificity)", ylab="True Positive Rate (Sensitivity)")
+lines(df_GLM, col="blue",type="l")               
+lines(df_RF, col="green",type="l") 
+
+abline(a = 0, b = 1, col = "lightgray") 
+
+legend("bottomright",
+c("XGBoost", "GLM","RF"),
+fill=c("red", "blue","green"))
+
+# Calculati g the area under the curve (AUC) for three models
+auc(ROC_XGB)
+auc(ROC_GLM)
+auc(ROC_RF)
+```
+
+```{r}
+# Extract the gain values for Gain chart
+GainTable_XGB <- cumGainsTable(prob_XGB, test_set$target, resolution = 1/100)
+GainTable_GLM <- cumGainsTable(prob_GLM, test_set$target, resolution = 1/100)
+GainTable_RF <- cumGainsTable(prob_RF, test_set$target, resolution = 1/100)
+
+```
+
+```{r}
+# Plot the Gain chart for three models
+plot(GainTable_XGB[,4], col="red", type="l",     
+xlab="Percentage of test instances", ylab="Percentage of correct predictions")
+lines(GainTable_GLM[,4], col="blue", type="l")
+lines(GainTable_RF[,4], col="green", type="l")
+
+legend("bottomright",
+c("XGBoost", "GLM", "RF"),
+fill=c("red", "blue", "green"))
+```

@@ -1,0 +1,522 @@
+---
+title: "Data Management"
+author: "Dushant Gohri"
+date: "2020/11/30"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+```
+
+Installing necessary packages for Data Management to work,
+
+```{r Packages for}
+ install.packages("tidyverse")
+ install.packages("janitor")
+ install.packages("rvest")
+ install.packages("httr")
+install.packages('devtools') 
+library(devtools) 
+install_github("ramnathv/rCharts")
+library("tidyverse")
+library("readxl")
+library("dplyr")
+library("janitor")
+library("tidyr")
+library(shiny)
+library(rCharts)
+library(leaflet)
+library(plyr)
+library(rvest)
+library(xml2)
+library(httr)
+library(stringr)
+library(rebus)
+library(XML)
+library(readr)
+library(RSQLite)
+
+```
+## R Markdown
+
+
+Installing necessary packages for Data Management to work,
+
+```{r Packages for}
+ install.packages("tidyverse")
+ install.packages("janitor")
+ install.packages("rvest")
+ install.packages("httr")
+install.packages('devtools') 
+library(devtools) 
+install_github("ramnathv/rCharts")
+library("tidyverse")
+library("readxl")
+library("dplyr")
+library("janitor")
+library("tidyr")
+library(shiny)
+library(rCharts)
+library(leaflet)
+library(plyr)
+library(rvest)
+library(xml2)
+library(httr)
+library(stringr)
+library(rebus)
+library(XML)
+library(readr)
+library(RSQLite)
+
+```
+
+#Connect to SQLite
+```{r} 
+
+myconn <- RSQLite::dbConnect(RSQLite::SQLite(),"HotelManagement.db")
+
+```
+
+# ```{r setup, include=FALSE}
+#  knitr::opts_chunk$set(echo = TRUE)
+# knitr::opts_chunk$set(connection = "myconn")
+# 
+# ```
+
+
+
+```{r}
+
+RSQLite::dbSendQuery(myconn,"DROP TABLE IF EXISTS `hotel`")
+RSQLite::dbSendQuery(myconn, "CREATE TABLE `hotel`  (
+  `Hotel_Id` int(11) NOT NULL,
+  `Hotel_name` varchar(255) DEFAULT NULL,
+  `Hotel_WebsiteUrl` varchar(255) DEFAULT NULL,
+  `Hotel_Phone` varchar(255) DEFAULT NULL,
+  `Hotel_StreetNumber` varchar(255) DEFAULT NULL,
+  `Hotel_StreetName` varchar(255) DEFAULT NULL,
+  `Hotel_City` varchar(255) DEFAULT NULL,
+  `Hotel_State` varchar(255) DEFAULT NULL,
+  `Hotel_PostalCode` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`Hotel_Id`) 
+)")
+
+RSQLite::dbListTables(myconn)
+
+```
+
+
+## Specifying the tables (Without the foreign key constraints)
+## Specifying the tables (With Foreign Key Constraints)
+
+
+##Insert into room table 
+```{r}
+
+RSQLite::dbSendQuery(myconn,"INSERT INTO hotel(Hotel_Id,Hotel_name,Hotel_WebsiteUrl,Hotel_Phone, Hotel_StreetNumber, Hotel_StreetName, Hotel_City , Hotel_State, Hotel_PostalCode) VALUES 
+(1,'abc hotels','https://www.abchotels.com/','6786785432','4th avenue','hill road','new street','sulihull','bhg g09')")
+
+RSQLite::dbSendQuery(myconn,"INSERT INTO hotel(Hotel_Id,Hotel_name,Hotel_WebsiteUrl,Hotel_Phone, Hotel_StreetNumber, Hotel_StreetName, Hotel_City , Hotel_State, Hotel_PostalCode) VALUES 
+(2,'def hotels','https://www.defhotels.com/','678672312','4th kingston','hill road','city center','spa','bhg g34')")
+
+RSQLite::dbSendQuery(myconn,"INSERT INTO hotel(Hotel_Id,Hotel_name,Hotel_WebsiteUrl,Hotel_Phone, Hotel_StreetNumber, Hotel_StreetName, Hotel_City , Hotel_State, Hotel_PostalCode) VALUES 
+(3,'geh hotels','https://www.gehhotels.com/','6786784534','4th algebra','hill road','wbs','london','bhg g84')")
+
+RSQLite::dbSendQuery(myconn,"INSERT INTO hotel(Hotel_Id,Hotel_name,Hotel_WebsiteUrl,Hotel_Phone, Hotel_StreetNumber, Hotel_StreetName, Hotel_City , Hotel_State, Hotel_PostalCode) VALUES 
+(4,'hij hotels','https://www.hijhotels.com/','6786897898','4th road','hill road','art center','warwick','bhg g56')")
+
+RSQLite::dbSendQuery(myconn,"INSERT INTO hotel(Hotel_Id,Hotel_name,Hotel_WebsiteUrl,Hotel_Phone, Hotel_StreetNumber, Hotel_StreetName, Hotel_City , Hotel_State, Hotel_PostalCode) VALUES 
+(5,'klm hotels','https://www.klmhotels.com/','678623421','4th block','hill road','sulihull','coventry','bhg g23')")
+
+```
+
+```{r}
+
+RSQLite::dbGetQuery(myconn, "SELECT * FROM `hotel`")
+
+```
+
+
+```{r}
+
+RSQLite::dbSendQuery(myconn,"DROP TABLE IF EXISTS `channel`")
+RSQLite::dbSendQuery(myconn, "CREATE TABLE `channel`  (
+  `Channel_Id` int(11) NOT NULL,
+  `Channel_Name` varchar(255) DEFAULT NULL,
+  `Hotel_Id` int(11) NULL DEFAULT NULL,
+  `Channel_BookingFee` decimal(8, 2) NULL DEFAULT NULL,
+  PRIMARY KEY (`Channel_Id`) ,
+  CONSTRAINT `fk_1` FOREIGN KEY (`Hotel_Id`) REFERENCES `hotel` (`Hotel_Id`)
+)")
+
+```
+##Insert into room table 
+```{r}
+
+RSQLite::dbSendQuery(myconn, "INSERT INTO channel(Channel_Id,Channel_Name,Hotel_Id,Channel_BookingFee) VALUES 
+(1,'booking.com',1,'50.00')")
+RSQLite::dbSendQuery(myconn, "INSERT INTO channel(Channel_Id,Channel_Name,Hotel_Id,Channel_BookingFee) VALUES 
+(2,'alibaba.com',1,'60.00')")
+RSQLite::dbSendQuery(myconn, "INSERT INTO channel(Channel_Id,Channel_Name,Hotel_Id,Channel_BookingFee) VALUES 
+(3,'paytm.com',1,'55.00')")
+RSQLite::dbSendQuery(myconn, "INSERT INTO channel(Channel_Id,Channel_Name,Hotel_Id,Channel_BookingFee) VALUES 
+(4,'goibibo',1,'45.00')")
+RSQLite::dbSendQuery(myconn, "INSERT INTO channel(Channel_Id,Channel_Name,Hotel_Id,Channel_BookingFee) VALUES 
+(5,'makemytrip',1,'90.00')")
+RSQLite::dbSendQuery(myconn, "INSERT INTO channel(Channel_Id,Channel_Name,Hotel_Id,Channel_BookingFee) VALUES 
+(6,'wizz',1,'59.00')")
+
+
+```
+
+
+
+```{r}
+
+RSQLite::dbSendQuery(myconn,"DROP TABLE IF EXISTS `customer`")
+RSQLite::dbSendQuery(myconn, "CREATE TABLE `customer`  (
+  `Cust_Id` int(11) NOT NULL,
+  `Cust_FirstName` varchar(255) DEFAULT NULL,
+  `Cust_MiddleName` varchar(255) DEFAULT NULL,
+  `Cust_LastName` varchar(255) DEFAULT NULL,
+  `Cust_Email` varchar(255) DEFAULT NULL,
+  `Cust_WorkPhone` varchar(255) DEFAULT NULL,
+  `Cust_HomePhone` varchar(255) DEFAULT NULL,
+  `Cust_CellPhone` varchar(255) DEFAULT NULL,
+  `Cust_StreetNumber` varchar(255) DEFAULT NULL,
+  `Cust_StreetName` varchar(255) DEFAULT NULL,
+  `Cust_City` varchar(255) DEFAULT NULL,
+  `Cust_State` varchar(255) DEFAULT NULL,
+  `Cust_Country` varchar(255) DEFAULT NULL,
+  `Cust_PostalCode` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`Cust_Id`)
+)")
+```
+
+```{r}
+
+RSQLite::dbSendQuery(myconn, "INSERT INTO customer VALUES 
+(1,'Dushant','H.','Gohri','abc@gmail.com','634872932','','','heronbank','gibbet hill road','coventry','coventry','United Kingdom','CV47ES')")
+
+RSQLite::dbSendQuery(myconn, "INSERT INTO customer VALUES 
+(2,'Rashi','H.','singh','singh@gmail.com','634832932','','','House Number -1256','Sector -14','Sonipat','Haryana','India','CV47AL')")
+
+RSQLite::dbSendQuery(myconn, "INSERT INTO customer VALUES 
+(3,'Tanvi','H.','Sharan','sharan@gmail.com','634823321','','','heronbank','gibbet hill road','coventry','coventry','United Kingdom','FV47GS')")
+
+RSQLite::dbSendQuery(myconn, "INSERT INTO customer VALUES 
+(4,'rohan','G.','harkara','BIY@gmail.com','6348729812','','','LAKESIDE','5TH AVENUE','coventry','coventry','Australia','HU7ES')")
+
+RSQLite::dbSendQuery(myconn, "INSERT INTO customer VALUES 
+(5,'MANSI','H.','MAYANI','MAYANI@gmail.com','634872932','','','BLUEBELL','COUNTRYSIDE','coventry','coventry','AUSTRALIA','AS47ES')")
+
+```
+
+
+
+
+```{r}
+
+RSQLite::dbSendQuery(myconn, "DROP TABLE IF EXISTS `transaction`");
+RSQLite::dbSendQuery(myconn, "CREATE TABLE `transaction`  (
+  `Trans_Id` int(11) NOT NULL,
+  `Cust_Id` int(11) NULL DEFAULT NULL,
+  `Trans_CCNumber` VARCHAR(200) NULL DEFAULT NULL,
+  `Trans_CCIssueDate` VARCHAR(200) NULL DEFAULT NULL,
+  `TransDesc_Id` int(11) NULL DEFAULT NULL,
+  `Trans_CCExpDate` varchar(200) NULL DEFAULT NULL,
+  `Trans_TotalPayment` decimal(8, 2) NULL DEFAULT NULL,
+  `Trans_Date` date NULL DEFAULT NULL,
+  PRIMARY KEY (`Trans_Id`),
+  CONSTRAINT `fk1` FOREIGN KEY (`Cust_Id`) REFERENCES `customer` (`Cust_Id`),
+  CONSTRAINT `fk15` FOREIGN KEY (`TransDesc_Id`) REFERENCES `transaction_Description` (`TransDesc_Id`)
+)");
+
+```
+
+```{r}
+
+#RSQLite::dbSendQuery(myconn, "INSERT INTO transaction VALUES #(1,1,'5647347887322345','01/20',1,'01/25',54.08,'2020-11-14')")
+RSQLite::dbSendQuery(myconn, "INSERT INTO transaction (Trans_Id) VALUES
+(9)")
+                     
+#(1,1,'56578945362788','09/20',1,'01/20',57.90,'2020-10-12')")
+
+
+
+
+```
+
+
+
+```{r}
+
+RSQLite::dbSendQuery(myconn, "DROP TABLE IF EXISTS `transaction_Description`");
+RSQLite::dbSendQuery(myconn, "CREATE TABLE `transaction_Description`  (
+  `TransDesc_Id` int(11) NOT NULL,
+  `Trans_Description` varchar(255) NOT NULL,
+  PRIMARY KEY (`TransDesc_Id`)
+)");
+
+```
+
+```{r}
+
+RSQLite::dbSendQuery(myconn, "INSERT INTO transaction_Description VALUES (1,'Cash')")
+
+
+```
+
+```{r}
+
+RSQLite::dbSendQuery(myconn, "DROP TABLE IF EXISTS `invoice`");
+RSQLite::dbSendQuery(myconn, "CREATE TABLE `invoice`  (
+  `Invoice_Id` int(11) NOT NULL,
+  `Trans_Id` int(11) NULL DEFAULT NULL,
+  `Cust_ID` int(11) NULL DEFAULT NULL,
+  `Invoice_Name` varchar(255) DEFAULT NULL,
+  `Invoice_TotalAmount` decimal(8, 2) NULL DEFAULT NULL,
+  `Invoice_TotalBalance` decimal(8, 2) NULL DEFAULT NULL,
+  `Invoice_OtherCharges` decimal(8, 2) NULL DEFAULT NULL,
+  `Invoice_Tax` decimal(8, 2) NULL DEFAULT NULL,
+  `Invoice_Date` date NULL DEFAULT NULL,
+  PRIMARY KEY (`Invoice_Id`),
+  CONSTRAINT `fk5` FOREIGN KEY (`Trans_Id`) REFERENCES `transaction` (`Trans_Id`),
+  CONSTRAINT `fk6` FOREIGN KEY (`Cust_ID`) REFERENCES `customer` (`Cust_Id`)
+)");
+
+```
+
+```{r}
+
+RSQLite::dbSendQuery(myconn, "INSERT INTO invoice(Invoice_Id,Trans_Id,Cust_ID,Invoice_Name, Invoice_TotalAmount, Invoice_TotalBalance, Invoice_OtherCharges , Invoice_Tax, Invoice_Date) VALUES 
+(1,1,1,'dushant gohri',40,0,4,6,'2020-11-15')");
+RSQLite::dbSendQuery(myconn, "INSERT INTO invoice(Invoice_Id,Trans_Id,Cust_ID,Invoice_Name, Invoice_TotalAmount, Invoice_TotalBalance, Invoice_OtherCharges , Invoice_Tax, Invoice_Date) VALUES 
+(2,2,2,'rashi gohri',140,0,4,6,'2020-11-15')");
+RSQLite::dbSendQuery(myconn, "INSERT INTO invoice(Invoice_Id,Trans_Id,Cust_ID,Invoice_Name, Invoice_TotalAmount, Invoice_TotalBalance, Invoice_OtherCharges , Invoice_Tax, Invoice_Date) VALUES 
+(1,1,1,'dushant gohri',40,0,4,6,'2020-11-15')");
+RSQLite::dbSendQuery(myconn, "INSERT INTO invoice(Invoice_Id,Trans_Id,Cust_ID,Invoice_Name, Invoice_TotalAmount, Invoice_TotalBalance, Invoice_OtherCharges , Invoice_Tax, Invoice_Date) VALUES 
+(1,1,1,'dushant gohri',40,0,4,6,'2020-11-15')");
+RSQLite::dbSendQuery(myconn, "INSERT INTO invoice(Invoice_Id,Trans_Id,Cust_ID,Invoice_Name, Invoice_TotalAmount, Invoice_TotalBalance, Invoice_OtherCharges , Invoice_Tax, Invoice_Date) VALUES 
+(1,1,1,'dushant gohri',40,0,4,6,'2020-11-15')");
+RSQLite::dbSendQuery(myconn, "INSERT INTO invoice(Invoice_Id,Trans_Id,Cust_ID,Invoice_Name, Invoice_TotalAmount, Invoice_TotalBalance, Invoice_OtherCharges , Invoice_Tax, Invoice_Date) VALUES 
+(1,1,1,'dushant gohri',40,0,4,6,'2020-11-15')");
+
+```
+
+
+
+```{r}
+
+RSQLite::dbSendQuery(myconn, "DROP TABLE IF EXISTS `reservation`");
+RSQLite::dbSendQuery(myconn, "CREATE TABLE `reservation` (
+  `Reservation_Id` integer NOT NULL,
+  `Hotel_Id` int(11) NULL DEFAULT NULL,
+  `Cust_Id` int(11) NULL DEFAULT NULL,
+  `Channel_Id` int(11) NULL DEFAULT NULL,
+  `Reservation_ArrivalDate` date NULL DEFAULT NULL,
+  `Reservation_DeptDate` date NULL DEFAULT NULL,
+  `Trans_Id` int(11) NULL DEFAULT NULL,
+  `Reservation_Preference` varchar(255) DEFAULT NULL,
+  `Reservation_AddService` varchar(255) DEFAULT NULL,
+  `Reservation_Facilities` varchar(255) DEFAULT NULL,
+  `Reservation_Status` varchar(255) DEFAULT NULL,
+  `Reservation_CCNumber` bigint(20) NULL DEFAULT NULL,
+  `Reservation_CCIssueDate` varchar(255) DEFAULT NULL,
+  `Reservation_CCExpDate` varchar(255) DEFAULT NULL,
+  `Reservation_NumberOfGuests` int(11) NULL DEFAULT NULL,
+  PRIMARY KEY (`Reservation_Id`),
+  CONSTRAINT `fk7` FOREIGN KEY (`Hotel_Id`) REFERENCES `hotel` (`Hotel_Id`),
+  CONSTRAINT `fk8` FOREIGN KEY (`Cust_Id`) REFERENCES `customer` (`Cust_Id`),
+  CONSTRAINT `fk9` FOREIGN KEY (`Channel_Id`) REFERENCES `channel` (`Channel_Id`),
+  CONSTRAINT `fk10` FOREIGN KEY (`Trans_Id`) REFERENCES `transaction` (`Trans_Id`)
+)");
+
+```
+
+```{r}
+
+RSQLite::dbSendQuery(myconn, "INSERT INTO reservation(Reservation_Id,Hotel_Id,Cust_ID,Channel_Id, Reservation_ArrivalDate, Reservation_DeptDate, Trans_Id , Reservation_Preference, Reservation_AddService, Reservation_Facilities, Reservation_Status, Reservation_CCNumber , Reservation_CCIssueDate, Reservation_CCExpDate, Reservation_NumberOfGuests) VALUES 
+(1)");
+
+```
+
+
+
+```{r}
+
+RSQLite::dbSendQuery(myconn, "DROP TABLE IF EXISTS `room`");
+RSQLite::dbSendQuery(myconn, "CREATE TABLE `room`  (
+  `Room_Id` int(11) NOT NULL,
+  `Reservation_Id` int(11) NULL DEFAULT NULL,
+  `Room_No` int(11) NULL DEFAULT NULL,
+  `Room_Name` varchar(255) DEFAULT NULL,
+  `Room_Beds` int(11) NULL DEFAULT NULL,
+  `Room_IsSmokingArea` tinyint(1) NULL DEFAULT NULL,
+  `Room_Floor` varchar(255) DEFAULT NULL,
+  `Room_Rate` decimal(8, 2) NULL DEFAULT NULL,
+  `Room_Availability` tinyint(1) NULL DEFAULT NULL,
+  `Hotel_Id` int(11) NULL DEFAULT NULL,
+  PRIMARY KEY (`Room_Id`) ,
+  CONSTRAINT `fk11` FOREIGN KEY (`Reservation_ID`) REFERENCES `reservation` (`Reservation_Id`),
+  CONSTRAINT `fk12` FOREIGN KEY (`Hotel_Id`) REFERENCES `hotel` (`Hotel_Id`)
+)");
+
+```
+
+##Insert into room table 
+```{r}
+
+RSQLite::dbSendQuery(myconn, "INSERT INTO room(Room_Id,Reservation_Id,Room_No,Room_Name, Room_Beds, Room_IsSmokingArea, Room_Floor , Room_Rate, Room_Availability, Hotel_Id) VALUES 
+(1)");
+
+```
+
+
+
+```{r}
+
+RSQLite::dbSendQuery(myconn, "DROP TABLE IF EXISTS `guests`");
+RSQLite::dbSendQuery(myconn, "CREATE TABLE `guests`  (
+  `Guests_Id` int(11) NOT NULL,
+  `Reservation_Id` int(11) NULL DEFAULT NULL,
+  `guest_FirstName` varchar(255) DEFAULT NULL,
+  `guest_MiddleName` varchar(255) DEFAULT NULL,
+  `guest_LastName` varchar(255) DEFAULT NULL,
+  `Room_id` int(11) NULL DEFAULT NULL,
+  `guest_DOA` varchar(255) DEFAULT NULL,
+  `guest_DOD` varchar(255) DEFAULT NULL,
+  PRIMARY KEY (`Guests_Id`),
+  CONSTRAINT `fk13` FOREIGN KEY (`Reservation_Id`) REFERENCES `reservation` (`Reservation_Id`),
+  CONSTRAINT `fk14` FOREIGN KEY (`Room_id`) REFERENCES `room` (`Room_Id`)
+)");
+```
+
+##Insert into Guests table 
+```{r}
+
+RSQLite::dbSendQuery(myconn, "INSERT INTO guests(Guests_Id,Reservation_Id,guest_FirstName,guest_MiddleName, guest_LastName, Room_id, guest_DOA , guest_DOD) VALUES 
+(1)");
+
+```
+
+##list number of tables in the hotel management database
+```{r}
+RSQLite::dbListTables(myconn)
+```
+
+
+
+## Pushing Data in: The INSERT INTO statement
+
+
+
+## SQL queries
+
+
+##The total spent for the customer for a particular stay (checkout invoice).
+```{r}
+
+RSQLite::dbGetQuery(myconn, "select 
+c.Cust_FirstName,c.Cust_MiddleName,c.Cust_LastName,(select sum(Invoice_TotalAmount) from Invoice where Cust_ID = c.Cust_Id) as totalSpent
+from Customer c");
+
+```
+
+The most valuable customers in (a) the last two months, (b) past year and (c) from the beginning of the records.
+##(a) the last two months
+
+```{r}
+
+RSQLite::dbGetQuery(myconn, "select 
+c.Cust_FirstName,c.Cust_MiddleName,c.Cust_LastName,sum(i.Invoice_TotalAmount) as totalSpent
+from Customer c inner join Invoice i on c.Cust_Id = i.Cust_Id 
+where i.Invoice_Date > DATE_SUB(CURDATE(), INTERVAL 1 MONTH)
+group by c.Cust_Id
+order by sum(i.Invoice_TotalAmount) desc limit 1")
+
+```
+
+##(b) past year
+
+```{r}
+
+RSQLite::dbGetQuery(myconn, "select 
+c.Cust_FirstName,c.Cust_MiddleName,c.Cust_LastName,sum(i.Invoice_TotalAmount) as totalSpent
+from Customer c inner join Invoice i on c.Cust_Id = i.Cust_Id 
+where i.Invoice_Date > DATE_SUB(CURDATE(), INTERVAL 1 YEAR)
+group by c.Cust_Id
+order by sum(i.Invoice_TotalAmount) desc limit 1")
+
+```
+
+##(c) from the beginning of the records
+
+```{r}
+
+RSQLite::dbGetQuery(myconn, "
+select 
+c.Cust_FirstName,c.Cust_MiddleName,c.Cust_LastName,sum(i.Invoice_TotalAmount) as totalSpent
+from Customer c inner join Invoice i on c.Cust_Id = i.Cust_Id 
+group by c.Cust_Id
+order by sum(i.Invoice_TotalAmount) desc limit 1")
+
+```
+
+
+
+
+##Which are the top countries where our customers come from ?
+
+```{r}
+
+RSQLite::dbGetQuery(myconn, "
+select Cust_Country from Customer group by Cust_Country
+order by count(1) desc limit 1")
+
+```
+
+
+##How much did the hotel pay in referral fees for each of the platforms that we have contracted with?
+```{r}
+
+RSQLite::dbGetQuery(myconn, "
+
+select h.Hotel_name,c.Channel_Name,c.Channel_BookingFee
+from Hotel h inner join Channel c on h.Hotel_Id = c.Hotel_Id")
+
+```
+
+
+
+##What is the utilization rate for each hotel (that is the average billable days of a hotel specified as the average utilization of room bookings for the last 12 months)
+
+```{r}
+
+RSQLite::dbGetQuery(myconn, "
+select h.Hotel_name,r.Room_No,r.Room_Name,r.Room_Rate
+from Room r inner join Hotel h on r.Hotel_Id = h.Hotel_Id")
+```
+
+
+
+
+
+##Calculate the Customer Value in terms of total spent for each customer before the current booking.
+```{r}
+
+RSQLite::dbGetQuery(myconn, "select c.Cust_FirstName,c.Cust_MiddleName,c.Cust_LastName,sum(t.Trans_TotalPayment) as totalSpent
+from Customer c inner join `Transaction` t on c.Cust_Id = t.Cust_Id")
+```
+
+
+#Disconnect to SQLite
+```{r}
+
+RSQLite::dbDisconnect(myconn)
+
+``` 

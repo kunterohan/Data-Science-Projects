@@ -1,0 +1,159 @@
+---
+title: "Data Management"
+author: "Dushant Gohri"
+date: "2020/11/30"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+
+```
+
+Installing necessary packages for Data Management to work,
+
+```{r PART C1, Eval=FALSE, warning=FALSE}
+install.packages("plotly")
+install.packages("shinydashboard")
+install.packages("anchors")
+install.packages("shiny")
+install.packages("ggplot2")
+
+library(plotly)
+library(shinydashboard)
+library(anchors)
+library(shiny)
+library(ggplot2)
+
+```
+
+
+### 2.A graphical representation of the rating values as obtained from the parsing of the XML document.
+```{r part D,warning=FALSE}
+
+#data_result_C <- get(load("./data_result_C.RData"))
+data_result_C <- get(load("./data_result_C-small.RData"))
+
+
+bb_data <- data_result_C
+##Change the class of LocalAuthorityName an RatingValue to prepare for the following operation and to make it more proper way to show in the table
+
+bb_data$LocalAuthorityName <- as.factor(bb_data$LocalAuthorityName)
+bb_data$RatingValue <- as.factor(bb_data$RatingValue)
+
+ui <- dashboardPage(
+  dashboardHeader(title = "FOOD RATINGS"),
+    dashboardSidebar(
+    sidebarMenu(
+      menuItem("Data", tabName = "dataset"),
+      menuItem("World Presence",tabName = "chart_1"),
+      menuItem("Business Wise Ratings",tabName = "chart_2"),
+      menuItem("Scheme Wise Ratings", tabName = "chart_3")
+    )),
+  dashboardBody(
+    tabItems(
+      # first tab named "dataset"
+      tabItem(tabName = "dataset",
+              fluidRow(h1("DATASET")),
+              fluidRow(column(width = 14,DT::dataTableOutput("resulttable")))
+              ),
+      
+      # second tab named "chart_1"
+      tabItem(tabName = "chart_1",
+              fluidRow(column(width=12, h1("Map"))),
+              fluidPage(
+  
+  navbarPage("the locations of the rated companies", id="main",
+             tabPanel("Map",     
+                    selectInput("input1","select rating value",choices = c(5,4,3,2,1,0,"Pass","Pass and Eat Safe", "Improvement Required","Awaiting Publication", "Exempt","Awaiting Inspection")),
+                    selectInput("input2","select Local Authority Name",choices = c("-", levels(bb_data$LocalAuthorityName)), selected = "Select"),leafletOutput("bbmap", height=1000)))
+)
+              ) )
+  )
+)
+
+server<-function(input, output) {
+  
+  changefactor <- c("AwaitingInspection" = "Awaiting Inspection", "AwaitingPublication" = "Awaiting Publication")
+  bb_data$RatingValue <- revalue(bb_data$RatingValue, changefactor)
+  bb_data<-bb_data %>% filter(!is.na(Latitude)) %>% filter(!is.na(Longitude)) 
+  sapply(bb_data, class)
+  
+  output$resulttable = DT::renderDataTable(bb_data)
+  
+  # create a color for different rating value 
+  Col <- colorFactor(topo.colors(12), bb_data$RatingValue)
+  
+  
+  output$bbmap <- renderLeaflet({
+    leaflet(bb_data) %>% 
+      addTiles() %>%
+      addCircles(lng = ~Longitude, lat = ~Latitude,
+          color = ~Col(RatingValue),
+          radius = 2,
+          stroke = T, 
+          fillOpacity = 1,
+          popup=paste(
+            "Rating:", bb_data$RatingValue, "<br>",
+            "Business:", bb_data$BusinessName, "<br>",
+            "Area:", bb_data$LocalAuthorityName, "<br>"))
+  })
+  
+    output$business <- renderPlotly({
+        to_filter <- bb_data$LocalAuthorityName
+        output <- ggplot(subset(bb_data,LocalAuthorityName==to_filter),aes(x=RatingValue))+geom_bar()    
+        ggplotly(output)
+  
+  })
+  
+}
+
+shinyApp(ui = ui, server = server)
+
+```
+
+
+```{r Part D1,eval=FALSE}
+
+data_2<-result %>%
+  filter(RatingValue %in% c(5,4,3,2,1,0,"Pass","Pass and Eat Safe", "Improvement Required","Awaiting Publication", "Exempt","Awaiting Inspection")) %>% 
+  mutate(rating_value=as.character(RatingValue),
+    local_authority_code=as.numeric(LocalAuthorityCode)) %>%
+  select(local_authority_code,rating_value) %>%
+  distinct()
+
+
+ui <- fluidPage(
+   titlePanel("the number of rating value in each level"),
+
+   sidebarLayout(
+      sidebarPanel(
+         sliderInput("bins",
+                     "Number of bins:",
+                     min = 1,
+                     max = 5,
+                     value = 3)
+      ),
+      
+      mainPanel(
+         plotOutput("distPlot")
+      )
+   )
+)
+
+server <- function(input, output) {
+   
+   output$distPlot <- renderPlot({
+      x    <- data_2[,2] 
+      bins <- seq(min(x), max(x), length.out = input$bins + 1)
+      
+      hist(x, breaks = bins, col = 'darkgray', border = 'white')
+   })
+}
+
+shinyApp(ui = ui, server = server)
+
+
+```
