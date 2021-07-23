@@ -1,0 +1,1257 @@
+---
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+# Part A
+
+
+```{r eval=FALSE}
+
+# Importing all libraries
+
+library(tidyverse)
+# library(edgar)
+library(tm)
+# library(qdap)
+library(lubridate)
+library(udpipe)
+library(textstem)
+library(tidytext)
+# library(tabulizer)
+library(ggpubr)
+library(BatchGetSymbols)
+library(gridExtra)
+library(grid)
+library(ggplot2)
+library(lattice)
+library(stm)
+library(LDAvis)
+library(factoextra)
+
+
+
+memory.limit(size=64000)
+
+```
+
+The list of companies was provided in the question pdf file.
+Hence firstly, the pdf was read using "tabulizer" package and the appendix table was extracted to create a data frame.
+
+```{r eval=FALSE}
+# The list of selected companies are saved as extracted from the question (appendix) file in the directory
+
+
+# Location of WARN notice pdf file
+location <- 'question.pdf'
+
+# Extract the table
+out <- extract_tables(location)
+
+# Column names
+headers <- c('symbol', 'security', 'gics_sector', 'gics_sub_industry', 'cik')
+
+temp_1 <- as.data.frame(out[1])
+temp_1$X5 <- NULL
+temp_1 <- temp_1[-1,]
+names(temp_1) <- headers
+
+temp_2 <- do.call(rbind, out[-1]) %>% as.data.frame()
+names(temp_2) <- headers
+
+sp_500 <- rbind(temp_1, temp_2)
+
+tail(sp_500)
+
+rm(list = c('temp_1','temp_2','out','headers'))
+```
+
+30 companies of choice were chosen without bias and the relevant information was filtered from the created data frame.
+
+```{r eval=FALSE}
+
+sp_500_30_cik <- c(47217 , 106040,  108772,  320193,  723531,  769397,  779152,  796343,  798354,  813672,  849399,  877890,  883241,  896878, 1002047, 1013462, 1101215, 1108524, 1123360, 1136893, 1137789, 1141391, 1175454, 1341439, 1365135, 1383312, 1403161, 1590955, 1633917, 1645590)
+
+# sp_500 %>% filter(cik %in% sp_500_30_cik)
+
+```
+
+```{r eval=FALSE}
+# The list of selected companies are saved as csv file in the directory
+# sp_500 <- read_csv("sp_500.csv")
+
+# Format column type
+sp_500$cik <- as.character(sp_500$cik) %>% as.integer()
+sp_500$gics_sector <- as.character(sp_500$gics_sector) %>% as.factor()
+sp_500$gics_sub_industry <- as.character(sp_500$gics_sub_industry) %>% as.factor()
+sp_500$security <- as.character(sp_500$security) %>% as.factor()
+
+# Selecting 30 companies as per the sub industry
+sp_500_30 <- sp_500 %>% filter(cik %in% sp_500_30_cik)
+```
+
+In this project, we have focused on the 10-K filings from the year **2010**, till **2020**.
+The Master Index of these years is loaded with the "edgar" package.
+
+```{r eval=FALSE}
+# loading the master index for years from 2010 to 2020
+
+edgar::getMasterIndex(filing.year = c(2010:2020))
+
+```
+
+A new directory is created to download all the textual data
+
+```{r eval=FALSE}
+master_indexes <- list.files("Master Indexes/",pattern="Rda")
+all_indexes <- data.frame()
+master_index1 <- data.frame()
+
+for(master_index in master_indexes){
+  load(paste0("Master Indexes/",master_index))
+  this_index <- year.master
+  all_indexes <- bind_rows(all_indexes,this_index)
+  print(master_index)
+
+  main_df <- year.master %>%
+    filter(cik %in% sp_500_30$cik, form.type %in% '10-K') %>%
+    mutate(date.filed = as.Date(date.filed)) %>%
+    mutate(year_filed = year(date.filed)) %>%
+    mutate(accession.number = gsub(".*/","",edgar.link))  %>%
+    mutate(accession.number = gsub('.txt','',accession.number))
+
+  colnames(main_df) <- gsub("\\.","_", colnames(main_df))
+  master_index1 <- rbind(master_index1, main_df)
+}
+```
+
+Further, we make sure the data types are correct.
+
+```{r eval=FALSE}
+master_index1$cik <- as.integer(master_index1$cik)
+
+master_index1 <- master_index1 %>% 
+  left_join(sp_500_30, by="cik")
+
+master_index1$date_filed <-  lubridate::ymd(master_index1$date_filed)
+
+```
+
+As explained in the pipeline, we create our custom "stopwords" and will be appended in further analysis.
+
+```{r eval=FALSE}
+# Stopwords
+
+stopwords <- c()
+
+stopwords_dicts <- list.files('stopwords')
+
+for(stopwords_dict in stopwords_dicts){
+  files_path <- paste('stopwords', stopwords_dict, sep="/")
+  local_list <- read_lines(files_path)
+  break
+  local_list <- iconv(local_list, "ASCII", "UTF-8", sub="") %>% tolower()
+  stopwords  <- c(stopwords, local_list)
+}
+
+all_months <- tolower(month.name)
+custom_stopwords <- c("financial","report","figure","company","disclaimer","footnote", all_months) 
+
+stopw_final <- c(stopwords, custom_stopwords)
+rm(stopwords,custom_stopwords, stopwords_dicts)
+
+###
+remove_words <- c("financial","report","figure","company","disclaimer","footnote", all_months, "foreign")
+
+tibble(word = remove_words,lexicon = rep("custom",length(remove_words))) %>% bind_rows(stop_words) -> custom_stopwords
+
+ud_model <- udpipe_download_model(language="english", overwrite=F)
+ud_model <- udpipe_load_model(ud_model$file_model)
+
+```
+
+```{r eval=FALSE}
+for(a in 1:length(master_index1$cik)){
+  print(a)
+  tryCatch({
+    cik_id <- master_index1$cik[a]
+    filing_year <- as.integer(master_index1$year_filed[a])
+
+    mda_text_main <- data.frame()
+
+    # Download 10K Management Discussion and list files from file location
+    edgar::getMgmtDisc(cik.no = cik_id, filing.year = filing_year)
+    file_location <- paste0("MD&A section text/")
+    list_file <- list.files(file_location, full.names = T)
+
+    # Cleaning textual contents for each form
+    # Removing digits, punctuations, white spaces and lower case
+    for(b in 1:length(list_file)){
+      current_file <- list_file[b]
+      mda_full_text <- read_file(current_file) %>%
+        tolower() %>%
+        removePunctuation() %>%
+        removeNumbers() %>%
+        stripWhitespace()
+
+      # Store cleaned textual contents to a data frame
+      single_text <- data.frame(matrix(ncol = 3, nrow = 0))
+      single_text <- as.data.frame(cbind(cik_id, mda_full_text, filing_year))
+      colnames(single_text) <- c("CIK", "Text", "Filing_Year")
+      single_text[] <- lapply(single_text, as.character)
+
+      mda_text_main <- rbind(mda_text_main, single_text)
+
+    }
+
+    mda_text_main$CIK <- as.integer(mda_text_main$CIK)
+    mda_text_main <- mda_text_main %>% inner_join(cik_table)
+
+
+
+  }
+  , error = function(ec){
+    error_file <- paste0(cik_id, "-", filing_year)
+  }
+  )
+}
+```
+
+```{r eval=FALSE}
+cleaned_10k <- data.frame()
+split_size <- 50
+ud_model <- udpipe_download_model(language="english", overwrite=F)
+ud_model <- udpipe_load_model(ud_model$file_model)
+
+index <- split(master_index1$accession_number, ceiling(seq_along(master_index1$accession_number)/split_size))
+
+for(i in index){
+  listed_files <- list.files('MD&A section text', pattern = paste0(paste0(i, '.txt'), collapse = "|"))
+  file_path <- paste0('MD&A section text/', listed_files)
+  
+  
+  for(i in 1:length(file_path)){
+    text_file <- read_lines (file_path[i])
+    text_transformed <- tibble(company_name = tolower(gsub('Company Name: ','', text_file[2])),
+                               accession_number = gsub('Accession Number: ','', text_file[5]),
+                               mgmtdisc = tolower(text_file[8]) %>%
+                                 removeNumbers() %>%
+                                 stripWhitespace())
+    
+
+    company_name <- unlist(str_split(text_transformed$company_name, " ", n=nchar(text_transformed$company_name)))[1]
+    sub_this <- c("item","management","managements","discussion and analysis","financial condition", "results of operations", company_name)
+    text_transformed$cleaned <- gsub(paste0(sub_this, collapse = '|'),"",text_transformed$mgmtdisc)
+    rm(company_name, sub_this)
+    #tokenisation and part of speech tagging
+    tokenised <- text_transformed %>%
+      select(accession_number, cleaned) %>% 
+      unnest_tokens(word, cleaned) %>% 
+      group_by(accession_number, word) %>% 
+      filter(!word %in% stopw_final)
+      
+    # udpipe annotating
+    local_df   <- udpipe_annotate(tokenised$word,
+                               doc_id = tokenised$accession_number,
+                               object = ud_model,
+                               parallel.cores = 4,
+                               Trace = T) %>% as.data.frame()
+ 
+    
+    # get nouns only
+    annotated_nouns_adv <- local_df %>% 
+      filter(upos %in% c("NOUN","ADV","ADJ")) %>% 
+      select(doc_id, lemma) %>% 
+      group_by(doc_id) %>% 
+      summarise(cleaned_noun = paste(lemma, collapse = " ")) %>% 
+      rename(accession_number = doc_id)
+    
+    # get the most important POS
+     annotated_full <- local_df %>% 
+      filter(upos %in% c("NOUN","ADV","ADJ","AUX","PART")) %>% 
+      select(doc_id, lemma) %>% 
+      group_by(doc_id) %>% 
+      summarise(cleaned_text = paste(lemma, collapse = " ")) %>% 
+      rename(accession_number = doc_id)
+     
+     # store the data into lists we created before for lookup
+     local_df   <- annotated_nouns_adv %>% 
+       left_join(annotated_full, by='accession_number') 
+     
+     cleaned_10k <- rbind(cleaned_10k, local_df)
+    
+  }
+}
+```
+
+```{r eval=FALSE}
+# joning cleaned data with master index
+sample_reports  <- cleaned_10k %>%
+       left_join(master_index1, by="accession_number") %>%
+       select(cik, company_name, year_filed, form_type, cleaned_noun, cleaned_text, gics_sub_industry, date_filed, accession_number, symbol)
+
+
+# write.csv(sample_reports,"sample_reports.csv", row.names = FALSE)
+
+# colSums(is.na(sample_reports))
+
+```
+
+```{r eval=FALSE}
+df <- sample_reports
+```
+
+```{r eval=FALSE}
+
+# Checking TFIDF and adding custom stopwords
+
+df_tf_idf_cik <- df %>% 
+  unnest_tokens(word, cleaned_text) %>% 
+  anti_join(stop_words) %>% 
+  count(cik, word, sort = TRUE) %>% 
+  ungroup() %>%
+  bind_tf_idf(word, cik, n)
+
+# Experimenting with tfidf values to eliminate the long tail
+df_tf_idf_cik %>% 
+  filter(tf_idf<0.002 & tf_idf>0.0001) %>% 
+  ggplot(aes(tf_idf)) +
+  geom_histogram() +
+  labs(title="TF-IDF Plot with CIK as Doc",
+         y = "Count",
+         x = "TF-IDF") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Stopwords identified and added to the custom_stopwords
+
+df_tf_idf_cik_out <- df_tf_idf_cik %>% 
+  filter(tf_idf>=0.002 | tf_idf<=0.0001)
+
+remove_words <- c(remove_words, df_tf_idf_cik_out$word)
+tibble(word = remove_words,lexicon = rep("custom",length(remove_words))) %>% bind_rows(stop_words) -> custom_stopwords
+
+```
+
+```{r eval=FALSE}
+df_tf_idf_sub <- df %>% 
+  unnest_tokens(word, cleaned_text) %>% 
+  anti_join(stop_words) %>% 
+  count(gics_sub_industry, word, sort = TRUE) %>% 
+  ungroup() %>%
+  bind_tf_idf(word, gics_sub_industry, n)
+
+# Experimenting with tfidf values to eliminate the long tail
+df_tf_idf_sub %>% 
+  filter(tf_idf<0.0002 & tf_idf>0.00001) %>% 
+  ggplot(aes(tf_idf)) +
+  geom_histogram() +
+  labs(title="TF-IDF Plot with Sub Industry as Doc",
+         y = "Count",
+         x = "TF-IDF") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+df_tf_idf_sub_out <- df_tf_idf_sub %>% 
+  filter(tf_idf>=0.0002 & tf_idf<=0.00001)
+
+remove_words <- c(remove_words, df_tf_idf_sub_out$word)
+tibble(word = remove_words,lexicon = rep("custom",length(remove_words))) %>% bind_rows(stop_words) -> custom_stopwords
+
+```
+
+```{r eval=FALSE}
+df_meta <- cleaned_10k %>%
+      inner_join(master_index1, by="accession_number") %>%
+       select(company_name, symbol, accession_number, cleaned_text, cleaned_noun, cik, year_filed, date_filed, gics_sub_industry)
+```
+
+```{r eval=FALSE}
+df_meta %>% 
+  unnest_tokens(word, cleaned_text) %>% 
+  anti_join(custom_stopwords) %>% 
+  group_by(word) %>% 
+  summarise(Count = n(), length = nchar(word)) %>% 
+  arrange(desc(length))
+```
+
+```{r eval=FALSE}
+# Overall Term Frequency
+
+df_meta %>% 
+  unnest_tokens(word, cleaned_text) %>% 
+  anti_join(custom_stopwords) %>% 
+  group_by(word) %>% 
+  summarise(Count = n()) %>% 
+  arrange(desc(Count)) %>%
+  top_n(25) %>% 
+  ggplot(aes(reorder(word, Count), Count)) +
+  geom_col() +
+  labs(title="Term Frequency at CIK Level",
+         y = "Frequency",
+         x = "Terms") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  coord_flip()
+```
+
+```{r eval=FALSE}
+df_meta_cleaned <- df_meta %>% unnest_tokens(word, cleaned_text) %>% 
+  anti_join(custom_stopwords) %>% 
+  group_by(accession_number) %>%
+  summarise(cleaned_text_wstop = paste(word, collapse = " "))
+
+df_meta_cleaned <- df_meta_cleaned %>%
+      inner_join(df_meta, by="accession_number") %>%
+       select(company_name, symbol, accession_number, cleaned_text_wstop, cleaned_noun, cik, year_filed, date_filed, gics_sub_industry)
+  
+
+```
+
+```{r eval=FALSE}
+
+df_meta_cleaned_tokens_sub <- df_meta_cleaned %>% 
+  unnest_tokens(word, cleaned_text_wstop) %>% 
+  count(gics_sub_industry, word, sort = TRUE) %>% 
+  ungroup() %>% 
+  bind_tf_idf(word, gics_sub_industry, n)
+
+df_meta_cleaned_tokens_sub %>% 
+  arrange(desc(n)) %>% 
+  mutate(word=factor(word, levels=rev(unique(word)))) %>%
+  group_by(gics_sub_industry) %>% 
+  top_n(10) %>% 
+  ungroup() %>% 
+  ggplot(aes(reorder(word, n),n,fill=gics_sub_industry)) + geom_col(show.legend=FALSE) +
+  labs(title="Term Frequency per Sub Industry",
+         y = " ",
+         x = "Terms") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~gics_sub_industry, ncol=4, scales="free") + 
+  coord_flip()
+
+```
+
+```{r eval=FALSE}
+df_meta_cleaned_tokens_year <- df_meta_cleaned %>% 
+  unnest_tokens(word, cleaned_text_wstop) %>% 
+  count(year_filed, word, sort = TRUE) %>% 
+  ungroup() %>% 
+  bind_tf_idf(word, year_filed, n)
+
+df_meta_cleaned_tokens_year %>% 
+  arrange(desc(n)) %>% 
+  mutate(word=factor(word, levels=rev(unique(word)))) %>%
+  group_by(year_filed) %>% 
+  top_n(10) %>% 
+  ungroup() %>% 
+  ggplot(aes(reorder(word, n),n,fill=year_filed)) + geom_col(show.legend=FALSE) +
+  labs(title="Term Frequency per Year",
+         y = " ",
+         x = "Terms") +
+  theme(plot.title = element_text(hjust = 0.5)) +
+  facet_wrap(~year_filed, ncol=4, scales="free") + 
+  scale_y_reordered() +
+  coord_flip()
+```
+
+# Part B
+
+```{r eval=FALSE}
+df_meta_cleaned_tokens <- df_meta_cleaned %>% 
+  unnest_tokens(word, cleaned_text_wstop) %>% 
+  anti_join(custom_stopwords)
+```
+
+```{r eval=FALSE}
+# Bing-Liu
+bing_liu_sentiment <- df_meta_cleaned_tokens %>% 
+  inner_join(get_sentiments("bing"), by = c("word" = "word")) %>% 
+  count(sentiment,accession_number) %>% 
+  spread(sentiment,n) %>%
+  mutate(bing_liu_sentiment = (positive-negative)/(positive+negative)) %>%
+  dplyr::select(accession_number,bing_liu_sentiment)
+
+bing_liu_sentiment <- df_meta_cleaned %>%
+  left_join(bing_liu_sentiment)  
+
+
+# NRC
+nrc_sentiment <- df_meta_cleaned_tokens %>% 
+  inner_join(get_sentiments("nrc"), by = c("word" = "word")) %>%
+  count(sentiment,accession_number) %>% 
+  spread(sentiment,n) %>% 
+  mutate(nrc_sentiment = (positive-negative)/(positive+negative)) %>% 
+  dplyr::select(accession_number,nrc_sentiment)
+
+nrc_sentiment <- df_meta_cleaned %>%
+  left_join(nrc_sentiment)
+
+# Afinn
+afinn_sentiment <- df_meta_cleaned_tokens %>% 
+  inner_join(get_sentiments("afinn"), by = c("word" = "word")) %>%
+  group_by(accession_number) %>% 
+  summarise(afinn_sentiment = sum(value)) 
+
+afinn_sentiment <- df_meta_cleaned %>%
+  left_join(afinn_sentiment)
+
+# Loughran
+
+loughran_sentiment <- df_meta_cleaned_tokens %>% 
+  inner_join(get_sentiments("loughran"),by = c("word" = "word")) %>% 
+  count(sentiment,accession_number) %>% 
+  spread(sentiment,n) %>%
+  mutate(loughran_sentiment = (positive-negative)/(positive+negative)) %>% 
+  dplyr::select(accession_number,loughran_sentiment)
+
+loughran_sentiment <- df_meta_cleaned %>%
+  left_join(loughran_sentiment)
+
+# Combine all into single df
+
+all_sentiments <- bing_liu_sentiment %>%
+  left_join(nrc_sentiment) %>% 
+  left_join(afinn_sentiment) %>% 
+  left_join(loughran_sentiment) %>% 
+  na.omit()
+
+loughran_sentiment_only <- loughran_sentiment %>% na.omit()
+
+```
+
+```{r eval=FALSE}
+# Plot the sentiment
+p1 <- all_sentiments %>% 
+  mutate(index = row_number(), sign = sign(bing_liu_sentiment)) %>%
+  ggplot(aes(x=index,y=bing_liu_sentiment, fill = sign))+
+  geom_bar(stat="identity")
+
+p2 <- all_sentiments %>% 
+  mutate(index = row_number(), sign = sign(nrc_sentiment)) %>%
+  ggplot(aes(x=index,y=nrc_sentiment, fill = sign))+
+  geom_bar(stat="identity")
+
+p3 <- all_sentiments %>% 
+  mutate(index = row_number(), sign = sign(afinn_sentiment)) %>%
+  ggplot(aes(x=index,y=afinn_sentiment, fill = sign))+
+  geom_bar(stat="identity")
+
+p4 <- all_sentiments %>% 
+  mutate(index = row_number(), sign = sign(loughran_sentiment)) %>%
+  ggplot(aes(x=index,y=loughran_sentiment, fill = sign))+
+  geom_bar(stat="identity")
+
+ggarrange(p1,p2,p3,p4,common.legend = TRUE, legend = "bottom")
+```
+
+```{r eval=FALSE}
+
+all_sentiments$date_before <- all_sentiments$date_filed - 7
+all_sentiments$date_after <- all_sentiments$date_filed + 9
+all_sentiments$ret_closing_price <- NA
+
+tickers <- all_sentiments$symbol
+freq.data = "weekly"
+first.date = all_sentiments$date_before
+last.date = all_sentiments$date_after
+type.return = "log"
+
+
+for (i in 1:nrow(all_sentiments)){
+  tryCatch({
+    
+    returns_weekly <- BatchGetSymbols(tickers = tickers[i],
+                                      freq.data = freq.data,
+                                      first.date = first.date[i],
+                                      last.date = last.date[i],
+                                      type.return = type.return)
+    
+    all_sentiments$ret_closing_price[i] <- returns_weekly$df.tickers$ret.closing.prices[3]
+    
+    
+    
+    
+    
+    
+  }, error = function(e){cat("error:",conditionMessage(e), "\n")})
+}
+
+colSums(is.na(all_sentiments))
+  
+```
+
+```{r eval=FALSE}
+# Models of Price against Sentiment
+all_sentiments$ret_closing_price  = as.numeric(all_sentiments$ret_closing_price )
+
+#To check distribution to decide whether to use log(price)
+
+all_sentiments %>% 
+  ggplot(aes(ret_closing_price)) +
+  geom_histogram(binwidth = 0.025) +
+  labs(title="Histogram Return Closing Price",
+         y = " ",
+         x = "Price") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r eval=FALSE}
+# Run regression models (Price against Sentiment)
+model1 <- lm(log(all_sentiments$ret_closing_price)~all_sentiments$bing_liu_sentiment)
+model2 <- lm(log(all_sentiments$ret_closing_price)~all_sentiments$nrc_sentiment)
+model3 <- lm(log(all_sentiments$ret_closing_price)~all_sentiments$afinn_sentiment)
+model4 <- lm(log(all_sentiments$ret_closing_price)~all_sentiments$loughran_sentiment)
+
+# Check the regression results
+stargazer::stargazer(model1,model2,model3,model4, type = "text")
+```
+
+```{r eval=FALSE}
+# Plot the simple regression
+gr_bl = all_sentiments %>% 
+  dplyr::select(bing_liu_sentiment,ret_closing_price) %>% 
+  na.omit() %>% 
+  ggplot(aes(x=bing_liu_sentiment,y=log(ret_closing_price)))  + geom_smooth(method="lm") + geom_point(size = 2, shape=1,alpha=0.1) + xlab("Bing-Liu")
+
+gr_nrc = all_sentiments %>% 
+  dplyr::select(nrc_sentiment,ret_closing_price) %>% 
+  na.omit() %>% 
+  ggplot(aes(x=nrc_sentiment,y=log(ret_closing_price)))  + geom_smooth(method="lm") + geom_point(size = 2, shape=1,alpha=0.1) + xlab("NRC")
+
+gr_afinn = all_sentiments %>% 
+  dplyr::select(afinn_sentiment,ret_closing_price) %>% 
+  na.omit() %>% 
+  ggplot(aes(x=afinn_sentiment,y=log(ret_closing_price)))  + geom_smooth(method="lm") + geom_point(size = 2, shape=1,alpha=0.1) + xlab("afinn")
+
+gr_loughran = all_sentiments %>% 
+  dplyr::select(loughran_sentiment,ret_closing_price) %>% 
+  na.omit() %>% 
+  ggplot(aes(x=loughran_sentiment,y=log(ret_closing_price)))  + geom_smooth(method="lm") + geom_point(size = 2, shape=1,alpha=0.1)+ xlab("Loughran")
+
+grid.arrange(gr_bl, gr_nrc, gr_afinn, gr_loughran,
+          ncol = 2, nrow = 2)
+```
+
+```{r eval=FALSE}
+# # Extract feelings from NRC dictionary
+# nrc_feelings <- df_meta_cleaned_tokens %>%
+#   inner_join(get_sentiments("nrc"), by = c("word" = "word")) %>%
+#   count(sentiment,accession_number) %>% 
+#   spread(sentiment,n) %>%
+#   mutate(nrc_sentiment = (positive-negative)/(positive+negative)) %>%
+#   dplyr::select(-c(positive,negative)) %>% 
+#   pivot_longer(anger:nrc_sentiment,names_to = "feeling",values_to="nrc_sentiment")
+# 
+# # Plot the feelings extracted
+# nrc_feelings %>%
+#   ggplot(aes(x=accession_number,y=nrc_sentiment,fill=feeling)) +
+#   geom_smooth()+
+#   facet_wrap(~feeling,scales="free_y",ncol=1)
+```
+
+# Part C
+
+##Part C: year_filed
+```{r eval=FALSE}
+
+# Load relevant data
+
+data <- sample_reports %>% 
+  select(accession_number, year_filed, gics_sub_industry, cik, cleaned_noun, symbol, date_filed) %>% 
+  rename(cleaned_text = cleaned_noun)
+
+
+
+```
+
+```{r eval=FALSE}
+
+data$date_filed <-  lubridate::ymd(data$date_filed)
+data$date_before <- data$date_filed - 7
+data$date_after <- data$date_filed + 8
+data$ret_closing_price <- NA
+
+tickers <- data$symbol
+freq.data = "weekly"
+first.date = data$date_before
+last.date = data$date_after
+type.return = "log"
+
+
+for (i in 1:nrow(data)){
+  tryCatch({
+    
+    returns_weekly <- BatchGetSymbols(tickers = tickers[i],
+                                      freq.data = freq.data,
+                                      first.date = first.date[i],
+                                      last.date = last.date[i],
+                                      type.return = type.return)
+    
+    data$ret_closing_price[i] <- returns_weekly$df.tickers$ret.closing.prices[3]
+    
+    
+    
+    
+    
+    
+  }, error = function(e){cat("error:",conditionMessage(e), "\n")})
+}
+
+colSums(is.na(data))
+
+data <- data %>% na.omit()
+
+```
+
+```{r eval=FALSE}
+# Data for STM
+
+data_for_stm_year <- data %>% 
+  group_by(year_filed) %>% 
+  summarise(cleaned_text_year = paste(cleaned_text, collapse = " "), mean_price = mean(ret_closing_price))
+
+data_for_stm_year <- data_for_stm_year %>% na.omit()
+data_for_stm_year$rownum <- 1:nrow(data_for_stm_year)
+data_for_stm_year <- data_for_stm_year %>% na.omit()
+```
+
+```{r eval=FALSE}
+
+cust_words <- unique(custom_stopwords$word)
+text <- textProcessor(data_for_stm_year$cleaned_text_year,
+                           metadata = data_for_stm_year,
+                           customstopwords = cust_words,
+                      removestopwords = TRUE,
+                      stem = F)
+```
+
+```{r eval=FALSE}
+# Remove words that appear in less than 1% of the corpus
+thresh <- round(1/100 * length(text$documents),0)
+
+out <- prepDocuments(text$documents,
+                     text$vocab,
+                     text$meta,
+                     lower.thresh = thresh)
+```
+
+```{r eval=FALSE}
+numtopics <- searchK(documents = out$documents,vocab = out$vocab,K = seq(from=2, to=20,by=1))
+
+plot(numtopics)
+```
+
+```{r eval=FALSE}
+stm(documents = out$documents,
+                   vocab = out$vocab,
+                   K = 0,
+                   prevalence = ~mean_price,
+                   max.em.its = 75,
+                   data = out$meta,
+                   reportevery=3,
+                   # gamma.prior = "L1",
+                   sigma.prior = 0.7,
+                   init.type = "Spectral")
+
+```
+
+```{r eval=FALSE}
+year_fit <- stm(documents = out$documents,
+                   vocab = out$vocab,
+                   K = 3,
+                   prevalence = ~mean_price,
+                   max.em.its = 75, 
+                   data = out$meta,
+                   reportevery=3,
+                   # gamma.prior = "L1",
+                   sigma.prior = 0.7,
+                   init.type = "Spectral")
+```
+
+```{r eval=FALSE}
+mod = year_fit
+docs = out$documents
+toLDAvis(
+  mod,
+  docs,
+  R = 30,
+  plot.opts = list(xlab = "PC1", ylab = "PC2"),
+  lambda.step = 0.1,
+  out.dir = tempfile(),
+  open.browser = interactive(),
+  as.gist = FALSE,
+  reorder.topics = TRUE
+)
+```
+
+```{r eval=FALSE}
+plot(year_fit)
+```
+
+```{r eval=FALSE}
+year_fit_topics<-tidy(year_fit,matrix="beta")
+
+
+#And we get the top 10 terms:
+  
+year_fit_terms<-year_fit_topics %>%
+  group_by(topic) %>%
+  slice_max(beta,n=30) %>%
+  ungroup() %>%
+  arrange(topic,desc(beta))
+```
+
+```{r eval=FALSE}
+# we look at the most frequent words appearing in each topic and give a name to each topic.
+topic_labels_1 <- paste0("topic_",1:3)
+
+topic_labels <- c("Uncertaintyin Business", 
+                  "Ethics in Business",
+                  "Future Prospects")
+```
+
+```{r eval=FALSE}
+year_fit_terms <- year_fit_terms %>%
+  mutate(topic_label = case_when((topic == 1) ~ topic_labels[1],
+                                 (topic == 2) ~ topic_labels[2],
+                                 (topic == 3) ~ topic_labels[3]))
+
+year_fit_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~topic_label, scales = "free") +
+  scale_y_reordered()
+```
+
+```{r eval=FALSE}
+gamma_topics<-tidy(year_fit,matrix="gamma")
+
+
+
+gamma_topics<-gamma_topics %>%
+  pivot_wider(names_from=topic,values_from=gamma)
+
+# topic_labels <- paste0("topic_",1:3)
+colnames(gamma_topics)<-c("document",topic_labels)
+
+rownames(gamma_topics) <- gamma_topics$document
+
+gamma_topics$document <- NULL
+gamma_topics<-as.data.frame(gamma_topics)
+head(gamma_topics)
+```
+
+```{r eval=FALSE}
+pcah2 <- FactoMineR::PCA(gamma_topics,graph = FALSE)
+factoextra::fviz_pca_var(pcah2)
+```
+
+```{r eval=FALSE}
+
+# We extract the theta matrix from the fitted object
+
+convergence_theta <- as.data.frame(year_fit$theta)
+convergence_theta
+```
+
+```{r eval=FALSE}
+
+# Top Words per Topic
+
+topic_summary <- summary(year_fit)
+topic_summary
+```
+
+```{r eval=FALSE}
+# Topic Proportions
+
+topic_proportions <- colMeans(year_fit$theta)
+topic_proportions
+
+# We can see very balanced division
+```
+
+```{r eval=FALSE}
+
+# Estimate the effects of ret closing price (mean) on topic probability
+
+effects <- estimateEffect(~mean_price,
+                          stmobj = year_fit,
+                          metadata = out$meta)
+```
+
+```{r eval=FALSE}
+
+plot(effects, covariate = "mean_price",
+     topics = c(1:3),
+     model = year_fit, method = "difference",
+     cov.value1 = "100", cov.value2 = "0",
+     xlab = "Low Ret. Closing Price ............................. High Ret. Closing Price",
+     xlim = c(-5.5,5.5),
+     main = "",
+     ci.level = 0.05,
+     custom.labels =topic_labels[c(1:3)],
+     labeltype = "custom")
+```
+
+```{r eval=FALSE}
+# Effect of mean ret. closing price on topic 
+# probability treating price as 
+# a continuous variable.
+# 
+# Ploting each topic separately 
+# we can see that some of them increase 
+# substantially with the price
+
+for(i in 1:length(topic_labels)){
+plot(effects, covariate = "mean_price",
+     topics = i,
+     model = year_fit, method = "continuous",
+     # For this plotting we get the uper quantile
+     # and low quantile of the price 
+     xlab = "Mean Ret. Closing Price",
+     # xlim = c(0,800),
+     main = topic_labels[i],
+     printlegend = FALSE,
+     custom.labels =topic_labels[i],
+     labeltype = "custom")
+}
+```
+
+
+
+```{r eval=FALSE}
+stm_object<- year_fit$theta
+
+colnames(stm_object) <- topic_labels
+
+causal_topic_df <- cbind(out$meta,stm_object)
+
+causal_topic_df  %>% 
+  left_join(all_sentiments) %>% 
+  dplyr::select(-c(year_filed, cleaned_text_year, rownum, company_name, symbol, accession_number, cleaned_text_wstop, cleaned_noun, cik,
+                   date_filed, gics_sub_industry, date_before, date_after, ret_closing_price)) %>%
+  na.omit() -> regress_stm_price_year
+
+model_search_year <- lm(mean_price~.,data=regress_stm_price_year)
+MASS::stepAIC(model_search_year)
+
+```
+
+```{r eval=FALSE}
+summary(lm(mean_price ~ regress_stm_price_year$`Uncertaintyin Business` + loughran_sentiment, data = regress_stm_price_year))
+```
+
+##Part C: sub industry
+
+```{r eval=FALSE}
+
+# Load relevant data
+
+data <- sample_reports %>% 
+  select(accession_number, year_filed, gics_sub_industry, cik, cleaned_noun, symbol, date_filed) %>% 
+  rename(cleaned_text = cleaned_noun)
+
+
+
+```
+
+```{r eval=FALSE }
+
+data$date_filed <-  lubridate::ymd(data$date_filed)
+data$date_before <- data$date_filed - 7
+data$date_after <- data$date_filed + 8
+data$ret_closing_price <- NA
+
+tickers <- data$symbol
+freq.data = "weekly"
+first.date = data$date_before
+last.date = data$date_after
+type.return = "log"
+
+
+for (i in 1:nrow(data)){
+  tryCatch({
+    
+    returns_weekly <- BatchGetSymbols(tickers = tickers[i],
+                                      freq.data = freq.data,
+                                      first.date = first.date[i],
+                                      last.date = last.date[i],
+                                      type.return = type.return)
+    
+    data$ret_closing_price[i] <- returns_weekly$df.tickers$ret.closing.prices[3]
+    
+    
+    
+    
+    
+    
+  }, error = function(e){cat("error:",conditionMessage(e), "\n")})
+}
+
+colSums(is.na(data))
+
+data <- data %>% na.omit()
+
+```
+
+```{r eval=FALSE}
+# Data for STM
+
+data_for_stm_sub_industry <- data %>% 
+  group_by(gics_sub_industry) %>% 
+  summarise(cleaned_text_sub = paste(cleaned_text, collapse = " "), mean_price = mean(ret_closing_price))
+
+data_for_stm_sub_industry <- data_for_stm_sub_industry %>% na.omit()
+data_for_stm_sub_industry$rownum <- 1:nrow(data_for_stm_sub_industry)
+data_for_stm_sub_industry <- data_for_stm_sub_industry %>% na.omit()
+
+colSums(is.na(data_for_stm_sub_industry))
+```
+
+```{r eval=FALSE}
+
+cust_words <- unique(custom_stopwords$word)
+
+text <- textProcessor(data_for_stm_sub_industry$cleaned_text_sub,
+                           metadata = data_for_stm_sub_industry,
+                           customstopwords = cust_words,
+                      removestopwords = TRUE,
+                      stem = F)
+```
+
+```{r eval=FALSE }
+# Remove words that appear in less than 1% of the corpus
+thresh <- round(1/100 * length(text$documents),0)
+
+out <- prepDocuments(text$documents,
+                     text$vocab,
+                     text$meta,
+                     lower.thresh = thresh)
+```
+
+```{r eval=FALSE }
+# numtopics <- searchK(documents = out$documents,vocab = out$vocab,K = seq(from=2, to=5,by=1))
+# 
+# plot(numtopics)
+```
+
+```{r eval=FALSE }
+# stm(documents = out$documents,
+#                    vocab = out$vocab,
+#                    K = 0,
+#                    prevalence = ~mean_price,
+#                    max.em.its = 75,
+#                    data = out$meta,
+#                    reportevery=3,
+#                    # gamma.prior = "L1",
+#                    sigma.prior = 0.7,
+#                    init.type = "Spectral")
+
+# Model Converged 
+# A topic model with 146 topics, 3 documents and a 2278 word dictionary.
+```
+
+```{r eval=FALSE}
+sub_fit <- stm(documents = out$documents,
+                   vocab = out$vocab,
+                   K = 3,
+                   prevalence = ~mean_price,
+                   max.em.its = 75, 
+                   data = out$meta,
+                   reportevery=3,
+                   # gamma.prior = "L1",
+                   sigma.prior = 0.7,
+                   init.type = "Spectral")
+```
+
+```{r eval=FALSE}
+mod = sub_fit
+docs = out$documents
+toLDAvis(
+  mod,
+  docs,
+  R = 30,
+  plot.opts = list(xlab = "PC1", ylab = "PC2"),
+  lambda.step = 0.1,
+  out.dir = tempfile(),
+  open.browser = interactive(),
+  as.gist = FALSE,
+  reorder.topics = TRUE
+)
+```
+
+```{r eval=FALSE}
+plot(sub_fit)
+```
+
+```{r eval=FALSE}
+sub_fit_topics<-tidy(sub_fit,matrix="beta")
+
+
+#And we get the top 10 terms:
+  
+sub_fit_terms<-sub_fit_topics %>%
+  group_by(topic) %>%
+  slice_max(beta,n=30) %>%
+  ungroup() %>%
+  arrange(topic,desc(beta))
+```
+
+```{r eval=FALSE}
+# we look at the most frequent words appearing in each topic and give a name to each topic.
+topic_labels_1 <- paste0("topic_",1:3)
+
+topic_labels <- c("Acquisitions and Progress", 
+                  "Assests and Clients",
+                  "Sales and Marketing")
+```
+
+```{r eval=FALSE}
+sub_fit_terms <- sub_fit_terms %>%
+  mutate(topic_label = case_when((topic == 1) ~ topic_labels[1],
+                                 (topic == 2) ~ topic_labels[2],
+                                 (topic == 3) ~ topic_labels[3]))
+
+sub_fit_terms %>%
+  mutate(term = reorder_within(term, beta, topic)) %>%
+  ggplot(aes(beta, term, fill = factor(topic))) +
+  geom_col(show.legend = FALSE) +
+  facet_wrap(~topic_label, scales = "free") +
+  scale_y_reordered()
+```
+
+```{r eval=FALSE}
+gamma_topics<-tidy(sub_fit,matrix="gamma")
+
+
+
+gamma_topics<-gamma_topics %>%
+  pivot_wider(names_from=topic,values_from=gamma)
+
+topic_labels <- paste0("topic_",1:3)
+colnames(gamma_topics)<-c("document",topic_labels)
+
+rownames(gamma_topics) <- gamma_topics$document
+
+gamma_topics$document <- NULL
+gamma_topics<-as.data.frame(gamma_topics)
+head(gamma_topics)
+```
+
+```{r eval=FALSE}
+pcah2 <- FactoMineR::PCA(gamma_topics,graph = FALSE)
+factoextra::fviz_pca_var(pcah2)
+```
+
+```{r eval=FALSE}
+
+# We extract the theta matrix from the fitted object
+
+convergence_theta <- as.data.frame(sub_fit$theta)
+convergence_theta
+```
+
+```{r eval=FALSE}
+
+# Top Words per Topic
+
+topic_summary <- summary(sub_fit)
+topic_summary
+```
+
+```{r eval=FALSE}
+# Topic Proportions
+
+topic_proportions <- colMeans(sub_fit$theta)
+topic_proportions
+
+# We can see very balanced division
+```
+
+```{r eval=FALSE}
+
+# Estimate the effects of ret closing price (mean) on topic probability
+
+effects <- estimateEffect(~mean_price,
+                          stmobj = sub_fit,
+                          metadata = out$meta)
+```
+
+```{r eval=FALSE}
+plot(effects, covariate = "mean_price",
+     topics = c(1:3),
+     model = year_fit, method = "difference",
+     cov.value1 = "100", cov.value2 = "0",
+     xlab = "Low Ret. Closing Price ............................. High Ret. Closing Price",
+     xlim = c(-5,5),
+     main = "",
+     ci.level = 0.05,
+     custom.labels =topic_labels[c(1:3)],
+     labeltype = "custom")
+```
+
+```{r eval=FALSE}
+# Effect of mean ret. closing price on topic 
+# probability treating price as 
+# a continuous variable.
+# 
+# Ploting each topic separately 
+# we can see that some of them increase 
+# substantially with the price
+
+for(i in 1:length(topic_labels)){
+plot(effects, covariate = "mean_price",
+     topics = i,
+     model = sub_fit, method = "continuous",
+     # For this plotting we get the uper quantile
+     # and low quantile of the price 
+     xlab = "Mean Ret. Closing Price",
+     # xlim = c(0,800),
+     main = topic_labels[i],
+     printlegend = FALSE,
+     custom.labels =topic_labels[i],
+     labeltype = "custom")
+}
+```
+
+```{r eval=FALSE}
+margin1 <- as.numeric(quantile(out$meta$mean_price)[2])
+margin2 <- as.numeric(quantile(out$meta$mean_price)[4])
+
+
+plot(effects, covariate = "mean_price",
+     topics = c(1:3),
+     model = year_fit, method = "difference",
+     cov.value1 = margin2, cov.value2 = margin1,
+     xlab = "Low Ret. Closing Price ............................. High Ret. Closing Price",
+     # xlim = c(-0.01,0.01),
+     main = "Topic probabilities for low and high ret. closing price",
+     custom.labels =topic_labels,
+     ci.level = 0.05,
+     labeltype = "custom")
+```
+
+```{r eval=FALSE}
+stm_object<- sub_fit$theta
+
+colnames(stm_object) <- topic_labels
+
+causal_topic_df <- cbind(out$meta,stm_object)
+
+causal_topic_df  %>% 
+  left_join(all_sentiments) %>% 
+  dplyr::select(-c(year_filed, cleaned_text_sub, rownum, company_name, symbol, accession_number, cleaned_text_wstop, cleaned_noun, cik,
+                   date_filed, gics_sub_industry, date_before, date_after, ret_closing_price)) %>%
+  na.omit() -> regress_stm_price_sub
+
+model_search_year <- lm(mean_price~.,data=regress_stm_price_sub)
+MASS::stepAIC(model_search_year)
+
+```
+
+```{r eval=FALSE}
+summary(lm(mean_price ~ topic_1 + topic_2, data = regress_stm_price_sub))
+```
